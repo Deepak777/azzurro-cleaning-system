@@ -1,7 +1,7 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import clsx from 'clsx';
-import { Camera, UploadCloud, AlertCircle } from 'lucide-react';
+import { Camera, UploadCloud, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { Link } from 'react-router-dom';
 
@@ -22,6 +22,69 @@ export default function CleanerFormPage() {
   const [images, setImages] = useState({ before: null, after: null });
   const [previews, setPreviews] = useState({ before: null, after: null });
   const [loading, setLoading] = useState(false);
+  
+  // Real-time camera states
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const [activeCamera, setActiveCamera] = useState(null);
+
+  // Cleanup camera stream when component unmounts
+  useEffect(() => {
+    return () => stopCamera();
+  }, []);
+
+  const startCamera = async (type) => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: "environment" },
+        audio: false
+      });
+      streamRef.current = stream;
+      setActiveCamera(type);
+      
+      // Allow React to mount the <video> element before assigning stream
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play().catch(e => console.error(e));
+        }
+      }, 50);
+    } catch (err) {
+      console.error(err);
+      toast.error('Could not access camera. Please allow Permissions.', {
+        style: { borderRadius: '16px', background: '#ef4444', color: '#fff', fontWeight: 'bold' }
+      });
+    }
+  };
+
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    setActiveCamera(null);
+  };
+
+  const capturePhoto = () => {
+    if (!videoRef.current) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = videoRef.current.videoWidth;
+    canvas.height = videoRef.current.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(videoRef.current, 0, 0);
+    
+    canvas.toBlob((blob) => {
+      const file = new File([blob], `${activeCamera}-photo.jpg`, { type: 'image/jpeg' });
+      setImages(prev => ({ ...prev, [activeCamera]: file }));
+      setPreviews(prev => ({ ...prev, [activeCamera]: URL.createObjectURL(blob) }));
+      stopCamera();
+    }, 'image/jpeg', 0.8);
+  };
+
+  const removeImage = (type) => {
+    setImages(prev => ({ ...prev, [type]: null }));
+    setPreviews(prev => ({ ...prev, [type]: null }));
+  };
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -39,20 +102,15 @@ export default function CleanerFormPage() {
     });
   };
 
-  const handleImageCapture = (e, type) => {
-    const file = e.target.files[0];
-    if (file) {
-      setImages(prev => ({ ...prev, [type]: file }));
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setPreviews(prev => ({ ...prev, [type]: reader.result }));
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!images.after) {
+      toast.error('After Cleaning photo is required!', {
+        style: { borderRadius: '16px', background: '#ef4444', color: '#fff', fontWeight: 'bold' }
+      });
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -81,16 +139,13 @@ export default function CleanerFormPage() {
           fontWeight: 'bold',
           padding: '16px 24px',
         },
-        iconTheme: {
-          primary: '#fff',
-          secondary: '#10b981'
-        }
+        iconTheme: { primary: '#fff', secondary: '#10b981' }
       });
 
       setFormData({
         property_name: '', floor_number: '', room_number: '',
-        cleaner_name: formData.cleaner_name,
-        cleaner_id: formData.cleaner_id,
+        cleaner_name: '', // CLEARING OUT THE NAME HERE
+        cleaner_id: '',
         cleaning_status: 'Pending', cleaning_type: 'Regular Cleaning',
         priority: 'Medium', issues_found: [], notes: ''
       });
@@ -99,12 +154,7 @@ export default function CleanerFormPage() {
     } catch (err) {
       console.error(err);
       toast.error('Failed to submit task. Please check server connection.', {
-        style: {
-          borderRadius: '16px',
-          background: '#ef4444',
-          color: '#fff',
-          fontWeight: 'bold',
-        }
+        style: { borderRadius: '16px', background: '#ef4444', color: '#fff', fontWeight: 'bold' }
       });
     } finally {
       setLoading(false);
@@ -114,9 +164,40 @@ export default function CleanerFormPage() {
   const issueOptions = ['Plumbing Issue', 'Electrical Issue', 'Damaged Furniture', 'Dirty Linen', 'Other'];
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-20 w-full flex flex-col items-center">
+    <div className="min-h-screen bg-gray-50 pb-20 w-full flex flex-col items-center relative">
+      
+      {/* Real-time Camera Overlay */}
+      {activeCamera && (
+        <div className="fixed inset-0 bg-black z-50 flex flex-col items-center shadow-2xl">
+          <button 
+            type="button" 
+            onClick={stopCamera} 
+            className="absolute top-6 right-6 z-50 bg-gray-900 bg-opacity-60 text-white p-3 rounded-full hover:bg-opacity-80 transition-all"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          
+          <video 
+            ref={videoRef} 
+            playsInline 
+            autoPlay 
+            className="w-full h-full object-cover" 
+          />
+          
+          <div className="absolute bottom-12 left-0 right-0 flex justify-center items-center pb-[env(safe-area-inset-bottom)]">
+            <div className="bg-black bg-opacity-40 p-4 rounded-full backdrop-blur-sm">
+              <button 
+                type="button" 
+                onClick={capturePhoto} 
+                className="w-20 h-20 bg-white rounded-full border-[6px] border-gray-300 flex items-center justify-center focus:outline-none hover:scale-105 active:scale-95 transition-transform"
+              ></button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="w-full max-w-lg">
-        <div className="bg-primary-600 text-white p-6 shadow-md rounded-b-3xl mb-6">
+        <div className="bg-primary-600 text-white p-6 shadow-md md:rounded-b-3xl mb-6 rounded-b-3xl">
           <h1 className="text-2xl font-bold">New Cleaning Task</h1>
           <p className="text-primary-100 mt-1 opacity-90">Submit your cleaning progress</p>
         </div>
@@ -202,35 +283,48 @@ export default function CleanerFormPage() {
 
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
               <h2 className="text-lg font-semibold text-gray-800 mb-4">Photos</h2>
+              
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="block text-sm font-medium text-gray-600 text-center">Before Cleaning</label>
-                  <label className="flex flex-col items-center justify-center h-32 bg-gray-50 border-2 border-dashed border-gray-300 rounded-2xl cursor-pointer hover:bg-gray-100 transition-colors overflow-hidden group">
-                    {previews.before ? (
-                       <img src={previews.before} className="w-full h-full object-cover" alt="Before" />
-                    ) : (
-                      <>
-                        <Camera className="w-8 h-8 text-gray-400 mb-2 group-hover:scale-110 transition-transform" />
-                        <span className="text-xs text-gray-500">Tap to capture</span>
-                      </>
-                    )}
-                    <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => handleImageCapture(e, 'before')} />
-                  </label>
+                  {previews.before ? (
+                    <div className="relative h-32 w-full rounded-2xl overflow-hidden group border border-gray-200">
+                      <img src={previews.before} className="w-full h-full object-cover" alt="Before" />
+                      <button type="button" onClick={() => removeImage('before')} className="absolute top-1 right-1 bg-red-500 text-white p-1 rounded-full opacity-80 hover:opacity-100">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button 
+                      type="button" 
+                      onClick={() => startCamera('before')} 
+                      className="w-full flex flex-col items-center justify-center h-32 bg-gray-50 border-2 border-dashed border-gray-300 rounded-2xl hover:bg-gray-100 transition-colors group focus:outline-none"
+                    >
+                      <Camera className="w-8 h-8 text-gray-400 mb-2 group-hover:scale-110 transition-transform" />
+                      <span className="text-xs text-gray-500 font-medium tracking-wide group-hover:text-primary-600 transition-colors">TAP TO CAPTURE</span>
+                    </button>
+                  )}
                 </div>
 
                 <div className="space-y-2">
                   <label className="block text-sm font-medium text-gray-600 text-center">After Cleaning *</label>
-                  <label className="flex flex-col items-center justify-center h-32 bg-gray-50 border-2 border-dashed border-gray-300 rounded-2xl cursor-pointer hover:bg-gray-100 transition-colors overflow-hidden group">
-                    {previews.after ? (
-                       <img src={previews.after} className="w-full h-full object-cover" alt="After" />
-                    ) : (
-                      <>
-                        <Camera className="w-8 h-8 text-primary-400 mb-2 group-hover:scale-110 transition-transform" />
-                        <span className="text-xs text-primary-600 font-medium">Capture *</span>
-                      </>
-                    )}
-                    <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => handleImageCapture(e, 'after')} required={!images.after} />
-                  </label>
+                  {previews.after ? (
+                    <div className="relative h-32 w-full rounded-2xl overflow-hidden group border border-gray-200">
+                      <img src={previews.after} className="w-full h-full object-cover" alt="After" />
+                      <button type="button" onClick={() => removeImage('after')} className="absolute top-1 right-1 bg-red-500 text-white p-1 rounded-full opacity-80 hover:opacity-100">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button 
+                      type="button" 
+                      onClick={() => startCamera('after')} 
+                      className="w-full flex flex-col items-center justify-center h-32 bg-gray-50 border-2 border-dashed border-gray-300 rounded-2xl hover:bg-gray-100 transition-colors group focus:outline-none"
+                    >
+                      <Camera className="w-8 h-8 text-primary-400 mb-2 group-hover:scale-110 transition-transform" />
+                      <span className="text-xs text-primary-600 font-bold tracking-wide">REQUIRED TAP</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -255,7 +349,6 @@ export default function CleanerFormPage() {
             </button>
           </form>
 
-          {/* ADDED ADMIN LINK FOR EASY TESTING */}
           <div className="mt-8 mb-4 text-center">
             <Link to="/admin" className="text-sm font-medium text-gray-500 hover:text-primary-600 transition-colors border-b border-transparent hover:border-primary-600 pb-1">
               Access Admin Dashboard →
