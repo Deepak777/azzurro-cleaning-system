@@ -1,0 +1,13 @@
+node_modules/
+dist/
+build/
+.env
+
+# Backend
+backend/uploads/
+backend/db/*.sqlite
+backend/database.sqlite
+
+# System
+.DS_Store
+Thumbs.db
